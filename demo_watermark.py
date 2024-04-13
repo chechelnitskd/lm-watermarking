@@ -63,7 +63,7 @@ def parse_args():
     parser.add_argument(
         "--model_name_or_path",
         type=str,
-        default="facebook/opt-6.7b",
+        default="gpt2",
         help="Main model, path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -173,25 +173,11 @@ def parse_args():
 
 def load_model(args):
     """Load and return the model and tokenizer"""
-
-    args.is_seq2seq_model = any([(model_type in args.model_name_or_path) for model_type in ["t5","T0"]])
-    args.is_decoder_only_model = any([(model_type in args.model_name_or_path) for model_type in ["gpt","opt","bloom"]])
-    if args.is_seq2seq_model:
-        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path)
-    elif args.is_decoder_only_model:
-        if args.load_fp16:
-            model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path,torch_dtype=torch.float16, device_map='auto')
-        else:
-            model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-    else:
-        raise ValueError(f"Unknown model type: {args.model_name_or_path}")
+    model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
 
     if args.use_gpu:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        if args.load_fp16: 
-            pass
-        else: 
-            model = model.to(device)
+        model = model.to(device)
     else:
         device = "cpu"
     model.eval()
@@ -254,10 +240,10 @@ def generate(prompt, args, model=None, device=None, tokenizer=None):
         torch.manual_seed(args.generation_seed)
     output_with_watermark = generate_with_watermark(**tokd_input)
 
-    if args.is_decoder_only_model:
-        # need to isolate the newly generated tokens
-        output_without_watermark = output_without_watermark[:,tokd_input["input_ids"].shape[-1]:]
-        output_with_watermark = output_with_watermark[:,tokd_input["input_ids"].shape[-1]:]
+    # if args.is_decoder_only_model:
+    #     # need to isolate the newly generated tokens
+    #     output_without_watermark = output_without_watermark[:,tokd_input["input_ids"].shape[-1]:]
+    #     output_with_watermark = output_with_watermark[:,tokd_input["input_ids"].shape[-1]:]
 
     decoded_output_without_watermark = tokenizer.batch_decode(output_without_watermark, skip_special_tokens=True)[0]
     decoded_output_with_watermark = tokenizer.batch_decode(output_with_watermark, skip_special_tokens=True)[0]
@@ -613,9 +599,16 @@ def run_gradio(args, model=None, device=None, tokenizer=None):
     else:
         demo.launch()
 
+from datasegmenting import CreateDataset
+import random
+
 def main(args): 
     """Run a command line version of the generation and detection operations
         and optionally launch and serve the gradio demo"""
+    assert os.path.isfile('sometext.txt'), "Training file does not exist"
+    init_sent = 'The following sentences are taken from the abstract of a scientific paper.'
+    dataset = CreateDataset('sometext.txt', init_sent)
+
     # Initial arg processing and log
     args.normalizers = (args.normalizers.split(",") if args.normalizers else [])
     print(args)
@@ -627,28 +620,32 @@ def main(args):
 
     # Generate and detect, report to stdout
     if not args.skip_model_load:
-        input_text = (
-        "The diamondback terrapin or simply terrapin (Malaclemys terrapin) is a "
-        "species of turtle native to the brackish coastal tidal marshes of the "
-        "Northeastern and southern United States, and in Bermuda.[6] It belongs "
-        "to the monotypic genus Malaclemys. It has one of the largest ranges of "
-        "all turtles in North America, stretching as far south as the Florida Keys "
-        "and as far north as Cape Cod.[7] The name 'terrapin' is derived from the "
-        "Algonquian word torope.[8] It applies to Malaclemys terrapin in both "
-        "British English and American English. The name originally was used by "
-        "early European settlers in North America to describe these brackish-water "
-        "turtles that inhabited neither freshwater habitats nor the sea. It retains "
-        "this primary meaning in American English.[8] In British English, however, "
-        "other semi-aquatic turtle species, such as the red-eared slider, might "
-        "also be called terrapins. The common name refers to the diamond pattern "
-        "on top of its shell (carapace), but the overall pattern and coloration "
-        "vary greatly. The shell is usually wider at the back than in the front, "
-        "and from above it appears wedge-shaped. The shell coloring can vary "
-        "from brown to grey, and its body color can be grey, brown, yellow, "
-        "or white. All have a unique pattern of wiggly, black markings or spots "
-        "on their body and head. The diamondback terrapin has large webbed "
-        "feet.[9] The species is"
-        )
+        # input_text = (
+        # "The diamondback terrapin or simply terrapin (Malaclemys terrapin) is a "
+        # "species of turtle native to the brackish coastal tidal marshes of the "
+        # "Northeastern and southern United States, and in Bermuda.[6] It belongs "
+        # "to the monotypic genus Malaclemys. It has one of the largest ranges of "
+        # "all turtles in North America, stretching as far south as the Florida Keys "
+        # "and as far north as Cape Cod.[7] The name 'terrapin' is derived from the "
+        # "Algonquian word torope.[8] It applies to Malaclemys terrapin in both "
+        # "British English and American English. The name originally was used by "
+        # "early European settlers in North America to describe these brackish-water "
+        # "turtles that inhabited neither freshwater habitats nor the sea. It retains "
+        # "this primary meaning in American English.[8] In British English, however, "
+        # "other semi-aquatic turtle species, such as the red-eared slider, might "
+        # "also be called terrapins. The common name refers to the diamond pattern "
+        # "on top of its shell (carapace), but the overall pattern and coloration "
+        # "vary greatly. The shell is usually wider at the back than in the front, "
+        # "and from above it appears wedge-shaped. The shell coloring can vary "
+        # "from brown to grey, and its body color can be grey, brown, yellow, "
+        # "or white. All have a unique pattern of wiggly, black markings or spots "
+        # "on their body and head. The diamondback terrapin has large webbed "
+        # "feet.[9] The species is"
+        # )
+
+        dataset_choice = random.choice(dataset)
+        input_text = dataset_choice["prompt"]
+        human_response = dataset_choice["prompt"] + dataset_choice["rest"]
 
         args.default_prompt = input_text
 
@@ -670,6 +667,10 @@ def main(args):
                                                  args, 
                                                  device=device, 
                                                  tokenizer=tokenizer)
+        human_response_detection_result = detect(human_response, 
+                                                 args, 
+                                                 device=device, 
+                                                 tokenizer=tokenizer)
 
         print("#"*term_width)
         print("Output without watermark:")
@@ -685,6 +686,14 @@ def main(args):
         print("-"*term_width)
         print(f"Detection result @ {args.detection_z_threshold}:")
         pprint(with_watermark_detection_result)
+        print("-"*term_width)
+
+        print("#"*term_width)
+        print("Human response:")
+        print(human_response)
+        print("-"*term_width)
+        print(f"Detection result @ {args.detection_z_threshold}:")
+        pprint(human_response_detection_result)
         print("-"*term_width)
 
 
