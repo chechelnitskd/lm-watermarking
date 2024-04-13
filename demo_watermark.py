@@ -600,6 +600,7 @@ def run_gradio(args, model=None, device=None, tokenizer=None):
         demo.launch()
 
 from datasegmenting import CreateDataset
+from attacks import interweaveTexts, similarReplacement
 import random
 
 def main(args): 
@@ -658,7 +659,58 @@ def main(args):
                                                                                             args, 
                                                                                             model=model, 
                                                                                             device=device, 
-                                                                                            tokenizer=tokenizer)
+                                                                                         tokenizer=tokenizer)
+        print()
+        print("#"*term_width)
+
+        ratios = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
+
+        #attack 1
+
+        #generate second llm response
+        dataset_choice2 = random.choice(dataset)
+        input_text2 = dataset_choice2["prompt"]
+        _, _, decoded_output_without_watermark2, decoded_output_with_watermark2, _ = generate(input_text2, 
+                                                                                            args, 
+                                                                                            model=model, 
+                                                                                            device=device, 
+                                                                                         tokenizer=tokenizer)
+
+        print("attack 1: splicing two LLM outputs")
+        for r in ratios:
+            attack = interweaveTexts(decoded_output_with_watermark, decoded_output_with_watermark2, r)
+            attack_detection_result = detect(attack, 
+                                                    args, 
+                                                    device=device, 
+                                                    tokenizer=tokenizer)
+            print("Attack with ", int(r*100), "% LLM text 1", "   ",attack_detection_result[0][6])
+
+        #attack 2
+        print("#"*term_width)
+        print("attack 2: splicing human and LLM text")
+        for r in ratios:
+            attack = interweaveTexts(decoded_output_with_watermark, human_response, r)
+            attack_detection_result = detect(attack, 
+                                                 args, 
+                                                 device=device, 
+                                                 tokenizer=tokenizer)
+            print("Attack with ", int(r*100), "% LLM text", "   ",attack_detection_result[0][6])
+
+        #attack 3
+        print("#"*term_width)
+        print("attack 3: replacing words with synonyms")
+        for r in ratios:
+            attack = similarReplacement(decoded_output_with_watermark, r)
+            attack_detection_result = detect(attack, 
+                                                 args, 
+                                                 device=device, 
+                                                 tokenizer=tokenizer)
+            print("Attack with ", int(r*100), "% words replaced with synonyms", "   ",attack_detection_result[0][6])
+        print()
+        print("#"*term_width)
+
+
+
         without_watermark_detection_result = detect(decoded_output_without_watermark, 
                                                     args, 
                                                     device=device, 
