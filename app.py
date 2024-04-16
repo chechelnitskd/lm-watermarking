@@ -47,6 +47,6 @@ arg_dict = {
 
 args.__dict__.update(arg_dict)
 
-from demo_watermark import main
+from demo_watermark_power import main
 
 main(args)

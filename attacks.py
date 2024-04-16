@@ -27,7 +27,7 @@ def interweaveTexts(text1, text2, ratio):
 #interweaveTexts(human_abstract1, llm_abstract1, 0.2)
 
 # attack 3- replace words with the synonyms
-#ration is how much of the original text to keep
+#ratio is how much of the original text to keep
 def similarReplacement(text, ratio):
     sentence = []
     for word in word_tokenize(text):
@@ -46,4 +46,4 @@ def similarReplacement(text, ratio):
     final = reconstructedSentence.replace("_", " ")
     return final
 
-similarReplacement(human_abstract1, 0.8)
+print(similarReplacement(human_abstract1, 0.8))

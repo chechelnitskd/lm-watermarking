@@ -17,6 +17,7 @@
 import os
 import argparse
 from argparse import Namespace
+import pickle
 from pprint import pprint
 from functools import partial
 
@@ -30,6 +31,7 @@ from transformers import (AutoTokenizer,
                           AutoModelForCausalLM,
                           LogitsProcessorList)
 
+from attacks import interweaveTexts, similarReplacement
 from watermark_processor import WatermarkLogitsProcessor, WatermarkDetector
 
 def str2bool(v):
@@ -648,100 +650,75 @@ def main(args):
         # "on their body and head. The diamondback terrapin has large webbed "
         # "feet.[9] The species is"
         # )
-        llm_true_pos, llm_false_neg, llm_false_pos, llm_true_neg, human_false_pos, human_true_neg = 0, 0, 0, 0, 0, 0
+
+        ratios = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
+        attack1_results = {0: [], 0.1: [], 0.2: [], 0.3: [], 0.4: [], 0.5: [], 0.6: [], 0.7: [], 0.8: [], 0.9: [], 1: []}
+        attack2_results = {0: [], 0.1: [], 0.2: [], 0.3: [], 0.4: [], 0.5: [], 0.6: [], 0.7: [], 0.8: [], 0.9: [], 1: []}
+        attack3_results = {0: [], 0.1: [], 0.2: [], 0.3: [], 0.4: [], 0.5: [], 0.6: [], 0.7: [], 0.8: [], 0.9: [], 1: []}
+
+        count = 1
 
         for i, dataset_choice in enumerate(dataset):
-            # dataset_choice = random.choice(dataset)
+            count += 1
             input_text = dataset_choice["prompt"]
             human_response = dataset_choice["prompt"] + dataset_choice["rest"]
 
             args.default_prompt = input_text
 
             term_width = 80
-            print("#"*term_width)
-            print("Prompt:")
-            print(input_text)
-
             _, _, decoded_output_without_watermark, decoded_output_with_watermark, _ = generate(input_text, 
                                                                                                 args, 
                                                                                                 model=model, 
                                                                                                 device=device, 
-                                                                                                tokenizer=tokenizer)
-            without_watermark_detection_result = detect(decoded_output_without_watermark, 
+                                                                                            tokenizer=tokenizer)
+            #attack 1
+
+            #generate second llm response
+            dataset_choice2 = random.choice(dataset)
+            input_text2 = dataset_choice2["prompt"]
+            _, _, decoded_output_without_watermark2, decoded_output_with_watermark2, _ = generate(input_text2, 
+                                                                                                args, 
+                                                                                                model=model, 
+                                                                                                device=device, 
+                                                                                            tokenizer=tokenizer)
+
+            for r in ratios:
+                attack = interweaveTexts(decoded_output_with_watermark, decoded_output_with_watermark2, r)
+                attack_detection_result = detect(attack, 
                                                         args, 
                                                         device=device, 
                                                         tokenizer=tokenizer)
-            with_watermark_detection_result = detect(decoded_output_with_watermark, 
+                attack1_results[r] += [attack_detection_result[0][6][1]]
+
+            #attack 2
+            for r in ratios:
+                attack = interweaveTexts(decoded_output_with_watermark, human_response, r)
+                attack_detection_result = detect(attack, 
                                                     args, 
                                                     device=device, 
                                                     tokenizer=tokenizer)
-            human_response_detection_result = detect(human_response, 
+                attack2_results[r] += [attack_detection_result[0][6][1]]
+
+            #attack 3
+            for r in ratios:
+                attack = similarReplacement(decoded_output_with_watermark, r)
+                attack_detection_result = detect(attack, 
                                                     args, 
                                                     device=device, 
                                                     tokenizer=tokenizer)
-            
+                attack3_results[r] += [attack_detection_result[0][6][1]]
+                print("Attack with ", int(r*100), "% words replaced with synonyms", "   ",attack_detection_result[0][6])
 
-            with_watermark_detected_as_watermark = get_prediction(with_watermark_detection_result) == "Watermarked"
-            llm_true_pos += with_watermark_detected_as_watermark
-            llm_false_neg += not with_watermark_detected_as_watermark
+            """
+            if count % 10 == 0:
+                with open("attack_results/attack1" + '.pickle', 'wb') as f:
+                    pickle.dump(attack1_results, f, pickle.HIGHEST_PROTOCOL)
+                with open("attack_results/attack2" + '.pickle', 'wb') as f:
+                    pickle.dump(attack2_results, f, pickle.HIGHEST_PROTOCOL)
+                with open("attack_results/attack3" + '.pickle', 'wb') as f:
+                    pickle.dump(attack3_results, f, pickle.HIGHEST_PROTOCOL)
+            """
 
-            without_watermark_detected_as_watermark = get_prediction(without_watermark_detection_result) == "Watermarked"
-            llm_false_pos += without_watermark_detected_as_watermark
-            llm_true_neg += not without_watermark_detected_as_watermark
-
-            human_response_detected_as_watermark = get_prediction(human_response_detection_result) == "Watermarked"
-            human_false_pos += human_response_detected_as_watermark
-            human_true_neg += not human_response_detected_as_watermark
-
-            print(f"Article {i}/{len(dataset)} - Watermarked: {'in' if not with_watermark_detected_as_watermark else ''}correct, " + \
-                  f"Unwatermarked: {'in' if without_watermark_detected_as_watermark else ''}correct, " + \
-                  f"Human: {'in' if human_response_detected_as_watermark else ''}correct")
-            
-            llm_power = llm_true_pos / (llm_true_pos + llm_false_neg)
-            llm_type_2 = llm_false_neg / (llm_true_pos + llm_false_neg)
-
-            llm_rejection = (llm_true_pos + llm_false_pos) / (llm_true_pos + llm_false_pos + llm_true_neg + llm_false_neg)
-            human_rejection = (llm_true_pos + human_false_pos) / (llm_true_pos + human_false_pos + human_true_neg + llm_false_neg)
-
-            llm_type_1 = llm_false_pos / (llm_false_pos + llm_true_neg)
-            human_type_1 = human_false_pos / (human_false_pos + human_true_neg)
-            print(f"Power: {llm_power}, Type II: {llm_type_2}, Rejection: {llm_rejection}, Type I: {llm_type_1}")
-            print(f"Human Rejection: {human_rejection}, Human Type I: {human_type_1}")
-
-            # print("#"*term_width)
-            # print("Output without watermark:")
-            # print(decoded_output_without_watermark)
-            # print("-"*term_width)
-            # print(f"Detection result @ {args.detection_z_threshold}:")
-            # pprint(without_watermark_detection_result)
-            # print("-"*term_width)
-
-            # print("#"*term_width)
-            # print("Output with watermark:")
-            # print(decoded_output_with_watermark)
-            # print("-"*term_width)
-            # print(f"Detection result @ {args.detection_z_threshold}:")
-            # pprint(with_watermark_detection_result)
-            # print("-"*term_width)
-
-            # print("#"*term_width)
-            # print("Human response:")
-            # print(human_response)
-            # print("-"*term_width)
-            # print(f"Detection result @ {args.detection_z_threshold}:")
-            # pprint(human_response_detection_result)
-            # print("-"*term_width)
-
-    llm_power = llm_true_pos / (llm_true_pos + llm_false_neg)
-    llm_type_2 = llm_false_neg / (llm_true_pos + llm_false_neg)
-
-    llm_rejection = (llm_true_pos + llm_false_pos) / (llm_true_pos + llm_false_pos + llm_true_neg + llm_false_neg)
-    human_rejection = (llm_true_pos + human_false_pos) / (llm_true_pos + human_false_pos + human_true_neg + llm_false_neg)
-
-    llm_type_1 = llm_false_pos / (llm_false_pos + llm_true_neg)
-    human_type_1 = human_false_pos / (human_false_pos + human_true_neg)
-    print(f"Power: {llm_power}, Type II: {llm_type_2}, Rejection: {llm_rejection}, Type I: {llm_type_1}")
-    print(f"Human Rejection: {human_rejection}, Human Type I: {human_type_1}")
 
     # Launch the app to generate and detect interactively (implements the hf space demo)
     if args.run_gradio:
